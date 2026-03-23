@@ -1,4 +1,4 @@
-import { SystemState, Event } from './types';
+import { SystemState, Event, TransactionDetails } from './types';
 
 export const INITIAL_STATE: SystemState = {
   balances: {
@@ -8,7 +8,7 @@ export const INITIAL_STATE: SystemState = {
     'merch_amazon': 0,
     'merch_stripe': 0,
   },
-  transactions: {}
+  transactions: {} as Record<string, TransactionDetails>
 };
 
 // 3. Functional Core: 100% Pure Reducer
@@ -140,6 +140,25 @@ function applyRawEvent(state: SystemState, event: Event): SystemState {
       }
       break;
     }
+
+    case 'EvtSettled': {
+      const tx = nextState.transactions[event.txId];
+      if (tx && tx.state === 'Settled') return state; // Idempotent
+      if (tx && tx.state === 'Captured') {
+        nextState.transactions[event.txId] = {
+          ...tx,
+          state: 'Settled',
+          batchId: event.batchId,
+          updatedAt: event.timestamp,
+          settledAt: event.timestamp
+        };
+      }
+      break;
+    }
+
+    // EvtRetried is a marker event — no state change, just recorded for the log
+    case 'EvtRetried':
+      break;
   }
 
   return nextState;

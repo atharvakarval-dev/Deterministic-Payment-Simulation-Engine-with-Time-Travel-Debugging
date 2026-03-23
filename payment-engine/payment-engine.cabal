@@ -1,0 +1,83 @@
+cabal-version:      3.0
+name:               payment-engine
+version:            0.1.0.0
+synopsis:           Deterministic Payment Simulation Engine with Time-Travel Debugging
+description:
+  A production-grade simulation of a distributed payment network (UPI/card rails).
+  Features: event sourcing, STM-based concurrency, Tagless Final DSL,
+  time-travel replay, QuickCheck property tests, and a CLI interface.
+license:            MIT
+author:             Payment Engine Authors
+maintainer:         dev@payment-engine.io
+category:           Finance
+build-type:         Simple
+
+-- ── Shared dependencies ────────────────────────────────────────────────────
+common shared-deps
+  build-depends:
+      base              >= 4.17 && < 5
+    , text              >= 2.0
+    , containers        >= 0.6
+    , stm               >= 2.5
+    , time              >= 1.12
+    , mtl               >= 2.3
+    , transformers      >= 0.6
+    , random            >= 1.2
+    , uuid              >= 1.3
+    , aeson             >= 2.1
+    , bytestring        >= 0.11
+    , unordered-containers >= 0.2
+  ghc-options:
+      -Wall
+      -Wcompat
+      -Widentities
+      -Wincomplete-record-updates
+      -Wincomplete-uni-patterns
+      -Wmissing-export-lists
+      -Wpartial-fields
+      -fshow-warning-groups
+  default-language:   GHC2021
+  default-extensions:
+      OverloadedStrings
+      LambdaCase
+      TupleSections
+      ScopedTypeVariables
+      DerivingStrategies
+      GeneralizedNewtypeDeriving
+      DeriveGeneric
+      DeriveAnyClass
+
+-- ── Library ────────────────────────────────────────────────────────────────
+library
+  import:          shared-deps
+  hs-source-dirs:  src
+  exposed-modules:
+      Domain.Types
+      Domain.StateMachine
+      Engine.Core
+      Engine.DSL
+      Engine.STM
+      Observability.Metrics
+      Simulation.Generator
+
+-- ── Executable ────────────────────────────────────────────────────────────
+executable payment-engine
+  import:          shared-deps
+  hs-source-dirs:  app
+  main-is:         Main.hs
+  build-depends:
+      payment-engine
+    , optparse-applicative >= 0.17
+  ghc-options:     -threaded -rtsopts -with-rtsopts=-N
+
+-- ── Test suite ────────────────────────────────────────────────────────────
+test-suite payment-engine-test
+  import:          shared-deps
+  type:            exitcode-stdio-1.0
+  hs-source-dirs:  test
+  main-is:         Spec.hs
+  build-depends:
+      payment-engine
+    , QuickCheck        >= 2.14
+    , hspec             >= 2.11
+    , hspec-quickcheck  >= 0.3
