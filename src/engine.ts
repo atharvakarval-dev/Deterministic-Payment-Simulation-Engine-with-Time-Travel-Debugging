@@ -27,9 +27,28 @@ export function applyFraudRules(state: SystemState, event: Event): Event | null 
   return null;
 }
 
+export function applyTimeouts(state: SystemState, currentTimestamp: number): SystemState {
+  let hasChanges = false;
+  const nextTxs = { ...state.transactions };
+  for (const [id, tx] of Object.entries(nextTxs)) {
+    if (tx.state === 'Initiated' && tx.initiatedAt && (currentTimestamp - tx.initiatedAt > 60000)) {
+      nextTxs[id] = {
+        ...tx,
+        state: 'Failed',
+        failureReason: 'Timeout',
+        updatedAt: currentTimestamp,
+        failedAt: currentTimestamp
+      };
+      hasChanges = true;
+    }
+  }
+  return hasChanges ? { ...state, transactions: nextTxs } : state;
+}
+
 export function applyEvent(state: SystemState, event: Event): SystemState {
-  const fraudEvent = applyFraudRules(state, event);
-  let nextState = applyRawEvent(state, event);
+  let nextState = applyTimeouts(state, event.timestamp);
+  const fraudEvent = applyFraudRules(nextState, event);
+  nextState = applyRawEvent(nextState, event);
   if (fraudEvent) {
     nextState = applyRawEvent(nextState, fraudEvent);
   }
@@ -44,7 +63,23 @@ function applyRawEvent(state: SystemState, event: Event): SystemState {
   };
 
   switch (event.type) {
-    case 'EvtInitiated':
+    case 'EvtInitiated': {
+      const existingTx = nextState.transactions[event.txId];
+      if (existingTx) {
+        if (existingTx.state === 'Failed' && existingTx.failureReason === 'NetworkTimeout' && (existingTx.retryCount || 0) < 1) {
+          nextState.transactions[event.txId] = {
+            ...existingTx,
+            state: 'Initiated',
+            amount: event.amount,
+            updatedAt: event.timestamp,
+            initiatedAt: event.timestamp,
+            retryCount: (existingTx.retryCount || 0) + 1,
+            failureReason: undefined,
+            failedAt: undefined
+          };
+        }
+        break; // Idempotent if not a valid retry
+      }
       nextState.transactions[event.txId] = {
         id: event.txId,
         from: event.from,
@@ -53,9 +88,11 @@ function applyRawEvent(state: SystemState, event: Event): SystemState {
         state: 'Initiated',
         createdAt: event.timestamp,
         updatedAt: event.timestamp,
-        initiatedAt: event.timestamp
+        initiatedAt: event.timestamp,
+        retryCount: 0
       };
       break;
+    }
 
     case 'EvtAuthorized': {
       const tx = nextState.transactions[event.txId];

@@ -3,7 +3,7 @@ export type TxId = string;
 export type Money = number;
 
 export type TxState = 'Initiated' | 'Authorized' | 'Captured' | 'Settled' | 'Failed';
-export type FailureReason = 'InsufficientFunds' | 'NetworkTimeout' | 'FraudDetected';
+export type FailureReason = 'InsufficientFunds' | 'NetworkTimeout' | 'FraudDetected' | 'Timeout';
 
 // 1. Domain Modeling: Events as Discriminated Unions (ADTs)
 export type Event =
@@ -25,6 +25,7 @@ export interface TransactionDetails {
   authorizedAt?: number;
   capturedAt?: number;
   failedAt?: number;
+  retryCount?: number;
 }
 
 // 2. System State: The materialized view of the event log

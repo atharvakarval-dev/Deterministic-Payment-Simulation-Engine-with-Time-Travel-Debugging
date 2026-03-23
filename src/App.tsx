@@ -20,7 +20,10 @@ export default function App() {
   const [playbackIndex, setPlaybackIndex] = useState<number>(-1); // -1 means tracking latest
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [eventFilter, setEventFilter] = useState<string>('All');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [expandedTxId, setExpandedTxId] = useState<string | null>(null);
+  const [minDelay, setMinDelay] = useState<number>(100);
+  const [maxDelay, setMaxDelay] = useState<number>(800);
   
   const eventLogRef = useRef<HTMLDivElement>(null);
 
@@ -85,52 +88,59 @@ export default function App() {
   useEffect(() => {
     if (!isPlaying) return;
 
-    const interval = setInterval(() => {
-      setTimeout(() => {
+    let timeoutId: NodeJS.Timeout;
+    const loop = () => {
+      const delay = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
+      timeoutId = setTimeout(() => {
         setEvents(prev => {
           const newEvents: Event[] = [];
           const now = Date.now();
-        // Use the latest state to determine valid next actions
-        const state = replay(prev, prev.length - 1);
+          // Use the latest state to determine valid next actions
+          const state = replay(prev, prev.length - 1);
 
-        // 1. Randomly initiate new transactions
-        if (Math.random() < 0.4) {
-          const from = USERS[Math.floor(Math.random() * USERS.length)];
-          const to = MERCHANTS[Math.floor(Math.random() * MERCHANTS.length)];
-          const amount = Math.floor(Math.random() * 500) + 10;
-          newEvents.push({ type: 'EvtInitiated', txId: `tx_${generateId()}`, from, to, amount, timestamp: now });
-        }
-
-        // 2. Progress existing transactions (State Machine Transitions)
-        Object.values(state.transactions).forEach(tx => {
-          // Only process a few at a time to simulate network jitter
-          if (Math.random() > 0.3) return; 
-
-          if (tx.state === 'Initiated') {
-            // Check balance for authorization
-            const balance = state.balances[tx.from] || 0;
-            if (balance >= tx.amount) {
-              newEvents.push({ type: 'EvtAuthorized', txId: tx.id, timestamp: now });
-            } else {
-              newEvents.push({ type: 'EvtFailed', txId: tx.id, reason: 'InsufficientFunds', timestamp: now });
-            }
-          } else if (tx.state === 'Authorized') {
-            if (Math.random() < 0.85) {
-              newEvents.push({ type: 'EvtCaptured', txId: tx.id, timestamp: now });
-            } else if (Math.random() < 0.5) {
-              newEvents.push({ type: 'EvtFailed', txId: tx.id, reason: 'NetworkTimeout', timestamp: now });
-            }
+          // 1. Randomly initiate new transactions
+          if (Math.random() < 0.4) {
+            const from = USERS[Math.floor(Math.random() * USERS.length)];
+            const to = MERCHANTS[Math.floor(Math.random() * MERCHANTS.length)];
+            const amount = Math.floor(Math.random() * 500) + 10;
+            newEvents.push({ type: 'EvtInitiated', txId: `tx_${generateId()}`, from, to, amount, timestamp: now });
           }
+
+          // 2. Progress existing transactions (State Machine Transitions)
+          Object.values(state.transactions).forEach(tx => {
+            // Only process a few at a time to simulate network jitter
+            if (Math.random() > 0.3) return; 
+
+            if (tx.state === 'Initiated') {
+              // Check balance for authorization
+              const balance = state.balances[tx.from] || 0;
+              if (balance >= tx.amount) {
+                newEvents.push({ type: 'EvtAuthorized', txId: tx.id, timestamp: now });
+              } else {
+                newEvents.push({ type: 'EvtFailed', txId: tx.id, reason: 'InsufficientFunds', timestamp: now });
+              }
+            } else if (tx.state === 'Authorized') {
+              if (Math.random() < 0.85) {
+                newEvents.push({ type: 'EvtCaptured', txId: tx.id, timestamp: now });
+              } else if (Math.random() < 0.5) {
+                newEvents.push({ type: 'EvtFailed', txId: tx.id, reason: 'NetworkTimeout', timestamp: now });
+              }
+            } else if (tx.state === 'Failed' && tx.failureReason === 'NetworkTimeout' && (tx.retryCount || 0) < 1) {
+              // Retry mechanism
+              newEvents.push({ type: 'EvtInitiated', txId: tx.id, from: tx.from, to: tx.to, amount: tx.amount, timestamp: now });
+            }
+          });
+
+          if (newEvents.length === 0) return prev;
+          return [...prev, ...newEvents];
         });
+        loop();
+      }, delay);
+    };
+    loop();
 
-        if (newEvents.length === 0) return prev;
-        return [...prev, ...newEvents];
-      });
-      }, Math.floor(Math.random() * 500));
-    }, 800);
-
-    return () => clearInterval(interval);
-  }, [isPlaying]);
+    return () => clearTimeout(timeoutId);
+  }, [isPlaying, minDelay, maxDelay]);
 
   // --- Handlers ---
   const handleScrubberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -169,13 +179,24 @@ export default function App() {
           </p>
         </div>
         
-        {/* Latency Metrics */}
+        {/* Latency Metrics & Config */}
         <div className="hidden md:flex items-center gap-4 text-xs font-mono bg-black/20 px-4 py-2 rounded-lg border border-white/5">
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 w-16">Min Delay:</span>
+              <input type="number" value={minDelay} onChange={e => setMinDelay(Number(e.target.value))} className="bg-black/40 border border-white/10 rounded px-1 py-0.5 w-16 text-white" />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 w-16">Max Delay:</span>
+              <input type="number" value={maxDelay} onChange={e => setMaxDelay(Number(e.target.value))} className="bg-black/40 border border-white/10 rounded px-1 py-0.5 w-16 text-white" />
+            </div>
+          </div>
+          <div className="w-px h-8 bg-white/10"></div>
           <div className="flex flex-col">
             <span className="text-gray-500 mb-0.5">Auth Latency</span>
             <span className="text-gray-300">Avg: {latencyMetrics.auth.avg.toFixed(0)}ms | Max: {latencyMetrics.auth.max.toFixed(0)}ms</span>
           </div>
-          <div className="w-px h-6 bg-white/10"></div>
+          <div className="w-px h-8 bg-white/10"></div>
           <div className="flex flex-col">
             <span className="text-gray-500 mb-0.5">Capture Latency</span>
             <span className="text-gray-300">Avg: {latencyMetrics.cap.avg.toFixed(0)}ms | Max: {latencyMetrics.cap.max.toFixed(0)}ms</span>
@@ -388,10 +409,28 @@ export default function App() {
                   </span>
                 </div>
               </div>
+              
+              {/* Search Bar */}
+              <div className="mt-2">
+                <input 
+                  type="text" 
+                  placeholder="Search by ID, sender, or receiver..." 
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full bg-black/20 border border-white/10 rounded px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 transition-colors"
+                />
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto p-4">
               <div className="space-y-2">
-                {Object.values(currentState.transactions).reverse().map(tx => {
+                {Object.values(currentState.transactions)
+                  .filter(tx => {
+                    if (!searchQuery) return true;
+                    const q = searchQuery.toLowerCase();
+                    return tx.id.toLowerCase().includes(q) || tx.from.toLowerCase().includes(q) || tx.to.toLowerCase().includes(q);
+                  })
+                  .reverse()
+                  .map(tx => {
                   let statusColor = 'bg-gray-500/10 text-gray-400 border-gray-500/20';
                   if (tx.state === 'Initiated') statusColor = 'bg-blue-500/10 text-blue-400 border-blue-500/20';
                   if (tx.state === 'Authorized') statusColor = 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20';
@@ -432,12 +471,34 @@ export default function App() {
                       
                       {/* Expanded Details */}
                       {expandedTxId === tx.id && (
-                        <div className="mt-3 pt-3 border-t border-white/5 text-xs text-gray-400 font-mono space-y-1">
-                          {tx.initiatedAt && <div><span className="text-gray-500 w-24 inline-block">Initiated:</span> {new Date(tx.initiatedAt).toISOString()}</div>}
-                          {tx.authorizedAt && <div><span className="text-gray-500 w-24 inline-block">Authorized:</span> {new Date(tx.authorizedAt).toISOString()}</div>}
-                          {tx.capturedAt && <div><span className="text-gray-500 w-24 inline-block">Captured:</span> {new Date(tx.capturedAt).toISOString()}</div>}
-                          {tx.failedAt && <div><span className="text-gray-500 w-24 inline-block">Failed:</span> {new Date(tx.failedAt).toISOString()}</div>}
-                          {tx.failureReason && <div className="text-red-400 mt-2">Reason: {tx.failureReason}</div>}
+                        <div className="mt-3 pt-3 border-t border-white/5 text-xs text-gray-400 font-mono space-y-3">
+                          <div className="space-y-1">
+                            {tx.initiatedAt && <div><span className="text-gray-500 w-24 inline-block">Initiated:</span> {new Date(tx.initiatedAt).toISOString()}</div>}
+                            {tx.authorizedAt && <div><span className="text-gray-500 w-24 inline-block">Authorized:</span> {new Date(tx.authorizedAt).toISOString()}</div>}
+                            {tx.capturedAt && <div><span className="text-gray-500 w-24 inline-block">Captured:</span> {new Date(tx.capturedAt).toISOString()}</div>}
+                            {tx.failedAt && <div><span className="text-gray-500 w-24 inline-block">Failed:</span> {new Date(tx.failedAt).toISOString()}</div>}
+                            {tx.failureReason && <div className="text-red-400 mt-1">Reason: {tx.failureReason}</div>}
+                            {tx.retryCount ? <div className="text-yellow-400 mt-1">Retries: {tx.retryCount}</div> : null}
+                          </div>
+                          
+                          {/* Visual Timeline */}
+                          <div className="relative pt-2 pb-1">
+                            <div className="absolute left-0 top-1/2 w-full h-0.5 bg-white/10 -z-10 -translate-y-1/2 mt-1"></div>
+                            <div className="flex items-center justify-between">
+                              <div className="flex flex-col items-center gap-1 bg-[#141414] px-2">
+                                <div className={`w-3 h-3 rounded-full border-2 border-[#141414] ${tx.initiatedAt ? 'bg-blue-500' : 'bg-gray-700'}`}></div>
+                                <span className="text-[9px] text-gray-500">Init</span>
+                              </div>
+                              <div className="flex flex-col items-center gap-1 bg-[#141414] px-2">
+                                <div className={`w-3 h-3 rounded-full border-2 border-[#141414] ${tx.authorizedAt ? 'bg-yellow-500' : 'bg-gray-700'}`}></div>
+                                <span className="text-[9px] text-gray-500">Auth</span>
+                              </div>
+                              <div className="flex flex-col items-center gap-1 bg-[#141414] px-2">
+                                <div className={`w-3 h-3 rounded-full border-2 border-[#141414] ${tx.capturedAt ? 'bg-emerald-500' : tx.failedAt ? 'bg-red-500' : 'bg-gray-700'}`}></div>
+                                <span className="text-[9px] text-gray-500">{tx.failedAt ? 'Failed' : 'Cap'}</span>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>
