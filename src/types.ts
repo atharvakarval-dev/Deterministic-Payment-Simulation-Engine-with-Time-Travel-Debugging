@@ -21,6 +21,10 @@ export interface TransactionDetails {
   failureReason?: FailureReason;
   createdAt: number;
   updatedAt: number;
+  initiatedAt?: number;
+  authorizedAt?: number;
+  capturedAt?: number;
+  failedAt?: number;
 }
 
 // 2. System State: The materialized view of the event log

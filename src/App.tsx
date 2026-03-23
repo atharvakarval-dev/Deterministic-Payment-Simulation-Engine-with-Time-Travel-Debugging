@@ -4,7 +4,9 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Play, Pause, SkipBack, SkipForward, RotateCcw, Activity, Database, Clock, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, RotateCcw, Activity, Database, Clock, AlertTriangle, CheckCircle2, Filter, Download, ChevronDown, ChevronRight } from 'lucide-react';
+import { ReactFlow, Background, Controls, Node, Edge } from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
 import { Event, SystemState, TxId, AccountId } from './types';
 import { applyEvent, INITIAL_STATE, replay } from './engine';
 
@@ -17,6 +19,8 @@ export default function App() {
   const [events, setEvents] = useState<Event[]>([]);
   const [playbackIndex, setPlaybackIndex] = useState<number>(-1); // -1 means tracking latest
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [eventFilter, setEventFilter] = useState<string>('All');
+  const [expandedTxId, setExpandedTxId] = useState<string | null>(null);
   
   const eventLogRef = useRef<HTMLDivElement>(null);
 
@@ -25,6 +29,50 @@ export default function App() {
   const effectiveIndex = playbackIndex === -1 ? events.length - 1 : playbackIndex;
   const currentState = useMemo(() => replay(events, effectiveIndex), [events, effectiveIndex]);
   const latestState = useMemo(() => replay(events, events.length - 1), [events]);
+
+  // --- Metrics ---
+  const latencyMetrics = useMemo(() => {
+    const authLatencies: number[] = [];
+    const capLatencies: number[] = [];
+    const txTimestamps: Record<string, { init?: number, auth?: number }> = {};
+
+    const visibleEvents = events.slice(0, effectiveIndex + 1);
+    for (const ev of visibleEvents) {
+      if (!txTimestamps[ev.txId]) txTimestamps[ev.txId] = {};
+      if (ev.type === 'EvtInitiated') txTimestamps[ev.txId].init = ev.timestamp;
+      if (ev.type === 'EvtAuthorized') {
+        txTimestamps[ev.txId].auth = ev.timestamp;
+        if (txTimestamps[ev.txId].init) authLatencies.push(ev.timestamp - txTimestamps[ev.txId].init!);
+      }
+      if (ev.type === 'EvtCaptured') {
+        if (txTimestamps[ev.txId].auth) capLatencies.push(ev.timestamp - txTimestamps[ev.txId].auth!);
+      }
+    }
+
+    const calc = (arr: number[]) => arr.length ? { avg: arr.reduce((a,b)=>a+b,0)/arr.length, max: Math.max(...arr) } : { avg: 0, max: 0 };
+    return { auth: calc(authLatencies), cap: calc(capLatencies) };
+  }, [events, effectiveIndex]);
+
+  // --- Graph Data ---
+  const { nodes, edges } = useMemo(() => {
+    const nodes: Node[] = Object.keys(currentState.balances).map((acc, i) => ({
+      id: acc,
+      position: { x: (i % 3) * 200, y: Math.floor(i / 3) * 150 },
+      data: { label: `${acc}\n$${(currentState.balances[acc]/100).toFixed(2)}` },
+      style: { background: '#141414', color: '#fff', border: '1px solid #333', borderRadius: '8px', padding: '10px', textAlign: 'center', fontFamily: 'monospace', fontSize: '10px' }
+    }));
+    
+    const edges: Edge[] = Object.values(currentState.transactions).map(tx => ({
+      id: tx.id,
+      source: tx.from,
+      target: tx.to,
+      label: `$${(tx.amount/100).toFixed(2)}`,
+      animated: tx.state === 'Initiated' || tx.state === 'Authorized',
+      style: { stroke: tx.state === 'Failed' ? '#ef4444' : tx.state === 'Captured' ? '#10b981' : '#6366f1' }
+    }));
+    
+    return { nodes, edges };
+  }, [currentState]);
 
   // Auto-scroll event log when tracking latest
   useEffect(() => {
@@ -38,9 +86,10 @@ export default function App() {
     if (!isPlaying) return;
 
     const interval = setInterval(() => {
-      setEvents(prev => {
-        const newEvents: Event[] = [];
-        const now = Date.now();
+      setTimeout(() => {
+        setEvents(prev => {
+          const newEvents: Event[] = [];
+          const now = Date.now();
         // Use the latest state to determine valid next actions
         const state = replay(prev, prev.length - 1);
 
@@ -77,6 +126,7 @@ export default function App() {
         if (newEvents.length === 0) return prev;
         return [...prev, ...newEvents];
       });
+      }, Math.floor(Math.random() * 500));
     }, 800);
 
     return () => clearInterval(interval);
@@ -95,6 +145,16 @@ export default function App() {
 
   const formatMoney = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
+  const handleExportJSON = () => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(events, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", "events.json");
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-[#0a0a0a] text-gray-300 font-sans selection:bg-indigo-500/30">
       {/* Header */}
@@ -107,6 +167,19 @@ export default function App() {
           <p className="text-xs text-gray-500 mt-1 font-mono">
             Time-Travel Debugging & Event Sourcing Architecture
           </p>
+        </div>
+        
+        {/* Latency Metrics */}
+        <div className="hidden md:flex items-center gap-4 text-xs font-mono bg-black/20 px-4 py-2 rounded-lg border border-white/5">
+          <div className="flex flex-col">
+            <span className="text-gray-500 mb-0.5">Auth Latency</span>
+            <span className="text-gray-300">Avg: {latencyMetrics.auth.avg.toFixed(0)}ms | Max: {latencyMetrics.auth.max.toFixed(0)}ms</span>
+          </div>
+          <div className="w-px h-6 bg-white/10"></div>
+          <div className="flex flex-col">
+            <span className="text-gray-500 mb-0.5">Capture Latency</span>
+            <span className="text-gray-300">Avg: {latencyMetrics.cap.avg.toFixed(0)}ms | Max: {latencyMetrics.cap.max.toFixed(0)}ms</span>
+          </div>
         </div>
         
         <div className="flex items-center gap-3">
@@ -179,14 +252,34 @@ export default function App() {
         
         {/* Left Col: Event Log (The Source of Truth) */}
         <div className="lg:col-span-4 border-r border-white/5 flex flex-col bg-[#0f0f0f]">
-          <div className="p-3 border-b border-white/5 bg-[#111] flex justify-between items-center">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 flex items-center gap-2">
-              <Database className="w-3 h-3" />
-              Append-Only Event Log
-            </h2>
-            <span className="text-[10px] font-mono bg-white/10 px-2 py-0.5 rounded text-gray-400">
-              Source of Truth
-            </span>
+          <div className="p-3 border-b border-white/5 bg-[#111] flex flex-col gap-3">
+            <div className="flex justify-between items-center">
+              <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 flex items-center gap-2">
+                <Database className="w-3 h-3" />
+                Append-Only Event Log
+              </h2>
+              <span className="text-[10px] font-mono bg-white/10 px-2 py-0.5 rounded text-gray-400">
+                Source of Truth
+              </span>
+            </div>
+            <div className="flex items-center gap-1 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden">
+              <Filter className="w-3 h-3 text-gray-500 mr-1 shrink-0" />
+              {['All', 'EvtInitiated', 'EvtAuthorized', 'EvtCaptured', 'EvtFailed'].map(f => (
+                <button
+                  key={f}
+                  onClick={() => setEventFilter(f)}
+                  className={`text-[10px] px-2 py-1 rounded whitespace-nowrap transition-colors ${
+                    eventFilter === f ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent'
+                  }`}
+                >
+                  {f.replace('Evt', '')}
+                </button>
+              ))}
+              <div className="flex-1"></div>
+              <button onClick={handleExportJSON} className="text-[10px] px-2 py-1 rounded bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent flex items-center gap-1 transition-colors">
+                <Download className="w-3 h-3" /> Export
+              </button>
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1" ref={eventLogRef}>
             {events.length === 0 ? (
@@ -194,7 +287,10 @@ export default function App() {
                 No events yet. Press Play.
               </div>
             ) : (
-              events.map((evt, idx) => {
+              events
+                .map((evt, idx) => ({ evt, idx }))
+                .filter(({ evt }) => eventFilter === 'All' || evt.type === eventFilter)
+                .map(({ evt, idx }) => {
                 const isPast = idx <= effectiveIndex;
                 const isCurrent = idx === effectiveIndex;
                 
@@ -241,7 +337,7 @@ export default function App() {
         <div className="lg:col-span-8 flex flex-col bg-[#0a0a0a]">
           
           {/* Top Half: Account Balances */}
-          <div className="h-1/3 border-b border-white/5 flex flex-col">
+          <div className="h-1/4 border-b border-white/5 flex flex-col">
             <div className="p-3 border-b border-white/5 bg-[#111]">
               <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
                 Materialized View: Balances
@@ -261,14 +357,36 @@ export default function App() {
             </div>
           </div>
 
-          {/* Bottom Half: Active Transactions */}
-          <div className="flex-1 flex flex-col min-h-0">
-            <div className="p-3 border-b border-white/5 bg-[#111] flex justify-between items-center">
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                Materialized View: State Machines
-              </h2>
-              <div className="text-[10px] text-gray-500 font-mono">
-                Showing state at event #{effectiveIndex >= 0 ? effectiveIndex : '-'}
+          {/* Middle: Active Transactions */}
+          <div className="h-2/5 border-b border-white/5 flex flex-col min-h-0">
+            <div className="p-3 border-b border-white/5 bg-[#111] flex flex-col gap-3">
+              <div className="flex justify-between items-center">
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  Materialized View: State Machines
+                </h2>
+                <div className="text-[10px] text-gray-500 font-mono">
+                  Showing state at event #{effectiveIndex >= 0 ? effectiveIndex : '-'}
+                </div>
+              </div>
+              
+              {/* Metrics Section */}
+              <div className="flex items-center gap-4 text-xs">
+                <div className="bg-white/5 px-3 py-1.5 rounded flex items-center gap-2">
+                  <span className="text-gray-500">Total:</span>
+                  <span className="font-mono text-gray-300">{Object.keys(currentState.transactions).length}</span>
+                </div>
+                <div className="bg-emerald-500/5 border border-emerald-500/10 px-3 py-1.5 rounded flex items-center gap-2">
+                  <span className="text-emerald-500/70">Success:</span>
+                  <span className="font-mono text-emerald-400">
+                    {Object.values(currentState.transactions).filter(tx => tx.state === 'Captured' || tx.state === 'Settled').length}
+                  </span>
+                </div>
+                <div className="bg-red-500/5 border border-red-500/10 px-3 py-1.5 rounded flex items-center gap-2">
+                  <span className="text-red-500/70">Failed:</span>
+                  <span className="font-mono text-red-400">
+                    {Object.values(currentState.transactions).filter(tx => tx.state === 'Failed').length}
+                  </span>
+                </div>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-4">
@@ -281,31 +399,47 @@ export default function App() {
                   if (tx.state === 'Failed') statusColor = 'bg-red-500/10 text-red-400 border-red-500/20';
 
                   return (
-                    <div key={tx.id} className="bg-[#141414] border border-white/5 rounded-lg p-3 flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className={`px-2 py-1 rounded border text-[10px] font-mono uppercase tracking-wider w-24 text-center ${statusColor}`}>
-                          {tx.state}
-                        </div>
-                        <div>
-                          <div className="font-mono text-sm text-gray-200">{tx.id}</div>
-                          <div className="text-xs text-gray-500 mt-0.5">
-                            {tx.from} &rarr; {tx.to}
+                    <div key={tx.id} className="bg-[#141414] border border-white/5 rounded-lg p-3 flex flex-col cursor-pointer hover:bg-white/5 transition-colors" onClick={() => setExpandedTxId(expandedTxId === tx.id ? null : tx.id)}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className={`px-2 py-1 rounded border text-[10px] font-mono uppercase tracking-wider w-24 text-center ${statusColor}`}>
+                            {tx.state}
+                          </div>
+                          <div>
+                            <div className="font-mono text-sm text-gray-200 flex items-center gap-2">
+                              {expandedTxId === tx.id ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                              {tx.id}
+                            </div>
+                            <div className="text-xs text-gray-500 mt-0.5">
+                              {tx.from} &rarr; {tx.to}
+                            </div>
                           </div>
                         </div>
+                        <div className="text-right">
+                          <div className="font-mono text-sm text-white">{formatMoney(tx.amount)}</div>
+                          {tx.failureReason && (
+                            <div className="text-[10px] text-red-400 mt-1 flex items-center justify-end gap-1">
+                              <AlertTriangle className="w-3 h-3" /> {tx.failureReason}
+                            </div>
+                          )}
+                          {tx.state === 'Captured' && (
+                            <div className="text-[10px] text-emerald-400 mt-1 flex items-center justify-end gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> Settled
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <div className="font-mono text-sm text-white">{formatMoney(tx.amount)}</div>
-                        {tx.failureReason && (
-                          <div className="text-[10px] text-red-400 mt-1 flex items-center justify-end gap-1">
-                            <AlertTriangle className="w-3 h-3" /> {tx.failureReason}
-                          </div>
-                        )}
-                        {tx.state === 'Captured' && (
-                          <div className="text-[10px] text-emerald-400 mt-1 flex items-center justify-end gap-1">
-                            <CheckCircle2 className="w-3 h-3" /> Settled
-                          </div>
-                        )}
-                      </div>
+                      
+                      {/* Expanded Details */}
+                      {expandedTxId === tx.id && (
+                        <div className="mt-3 pt-3 border-t border-white/5 text-xs text-gray-400 font-mono space-y-1">
+                          {tx.initiatedAt && <div><span className="text-gray-500 w-24 inline-block">Initiated:</span> {new Date(tx.initiatedAt).toISOString()}</div>}
+                          {tx.authorizedAt && <div><span className="text-gray-500 w-24 inline-block">Authorized:</span> {new Date(tx.authorizedAt).toISOString()}</div>}
+                          {tx.capturedAt && <div><span className="text-gray-500 w-24 inline-block">Captured:</span> {new Date(tx.capturedAt).toISOString()}</div>}
+                          {tx.failedAt && <div><span className="text-gray-500 w-24 inline-block">Failed:</span> {new Date(tx.failedAt).toISOString()}</div>}
+                          {tx.failureReason && <div className="text-red-400 mt-2">Reason: {tx.failureReason}</div>}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -315,6 +449,21 @@ export default function App() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+
+          {/* Bottom: Transaction Graph */}
+          <div className="flex-1 flex flex-col min-h-0">
+            <div className="p-3 border-b border-white/5 bg-[#111]">
+              <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                Transaction Graph
+              </h2>
+            </div>
+            <div className="flex-1 bg-[#0a0a0a]">
+              <ReactFlow nodes={nodes} edges={edges} fitView>
+                <Background color="#333" gap={16} />
+                <Controls />
+              </ReactFlow>
             </div>
           </div>
 

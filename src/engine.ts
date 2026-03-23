@@ -12,9 +12,31 @@ export const INITIAL_STATE: SystemState = {
 };
 
 // 3. Functional Core: 100% Pure Reducer
-// This function takes the current state and an event, and returns a NEW state.
-// It enforces the state machine rules (e.g., cannot capture an un-authorized tx).
+export function applyFraudRules(state: SystemState, event: Event): Event | null {
+  if (event.type === 'EvtInitiated') {
+    // Rule 1: Unusually large amounts
+    if (event.amount > 400) {
+      return { type: 'EvtFailed', txId: event.txId, reason: 'FraudDetected', timestamp: event.timestamp + 1 };
+    }
+    // Rule 2: Multiple failed transactions for the same user
+    const userFailedTxs = Object.values(state.transactions).filter(tx => tx.from === event.from && tx.state === 'Failed');
+    if (userFailedTxs.length >= 2) {
+      return { type: 'EvtFailed', txId: event.txId, reason: 'FraudDetected', timestamp: event.timestamp + 1 };
+    }
+  }
+  return null;
+}
+
 export function applyEvent(state: SystemState, event: Event): SystemState {
+  const fraudEvent = applyFraudRules(state, event);
+  let nextState = applyRawEvent(state, event);
+  if (fraudEvent) {
+    nextState = applyRawEvent(nextState, fraudEvent);
+  }
+  return nextState;
+}
+
+function applyRawEvent(state: SystemState, event: Event): SystemState {
   // Structural sharing / deep copy for immutability
   const nextState: SystemState = {
     balances: { ...state.balances },
@@ -30,17 +52,20 @@ export function applyEvent(state: SystemState, event: Event): SystemState {
         amount: event.amount,
         state: 'Initiated',
         createdAt: event.timestamp,
-        updatedAt: event.timestamp
+        updatedAt: event.timestamp,
+        initiatedAt: event.timestamp
       };
       break;
 
     case 'EvtAuthorized': {
       const tx = nextState.transactions[event.txId];
+      if (tx && tx.state === 'Authorized') return state; // Idempotent
       if (tx && tx.state === 'Initiated') {
         nextState.transactions[event.txId] = {
           ...tx,
           state: 'Authorized',
-          updatedAt: event.timestamp
+          updatedAt: event.timestamp,
+          authorizedAt: event.timestamp
         };
       }
       break;
@@ -48,6 +73,7 @@ export function applyEvent(state: SystemState, event: Event): SystemState {
 
     case 'EvtCaptured': {
       const tx = nextState.transactions[event.txId];
+      if (tx && tx.state === 'Captured') return state; // Idempotent
       if (tx && tx.state === 'Authorized') {
         // Move the money
         nextState.balances[tx.from] -= tx.amount;
@@ -56,7 +82,8 @@ export function applyEvent(state: SystemState, event: Event): SystemState {
         nextState.transactions[event.txId] = {
           ...tx,
           state: 'Captured',
-          updatedAt: event.timestamp
+          updatedAt: event.timestamp,
+          capturedAt: event.timestamp
         };
       }
       break;
@@ -64,12 +91,14 @@ export function applyEvent(state: SystemState, event: Event): SystemState {
 
     case 'EvtFailed': {
       const tx = nextState.transactions[event.txId];
+      if (tx && tx.state === 'Failed') return state; // Idempotent
       if (tx && tx.state !== 'Captured' && tx.state !== 'Settled') {
         nextState.transactions[event.txId] = {
           ...tx,
           state: 'Failed',
           failureReason: event.reason,
-          updatedAt: event.timestamp
+          updatedAt: event.timestamp,
+          failedAt: event.timestamp
         };
       }
       break;
