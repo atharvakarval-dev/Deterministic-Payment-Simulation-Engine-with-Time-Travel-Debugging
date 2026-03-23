@@ -5,15 +5,39 @@ distributed systems design, and correctness-by-construction for a fintech contex
 
 ---
 
-## Architecture
+## 🏗️ Full-Stack Architecture
 
+The system consists of a **Haskell Functional Core** processing high-throughput transactions using Software Transactional Memory (STM), connected to a **React Topology Dashboard** via a **TypeScript Server-Sent Events (SSE) Bridge**.
+
+```mermaid
+graph TD
+    subgraph Frontend [React Topology Dashboard]
+        A[App.tsx] -->|Polls| B[Live Transaction Graph]
+        A -->|Reads latest| C[Materialized View Balances]
+        A -->|Scrubbing| D[Time-Travel Scrubber]
+    end
+
+    subgraph Bridge [TypeScript Express Bridge]
+        E[server.ts] -.->|Streams SSE Events| A
+    end
+
+    subgraph Backend [Haskell Payment Engine]
+        F[Main.hs CLI] -.->|Stdout Event Log| E
+        G[Simulation.Generator] -->|Random Stream| F
+        H[Engine.STM] -->|Atomic Debit/Credit| F
+        H --> I[Engine.Core Reducers]
+        H -.->|Idempotency Check| J[Processed Set]
+    end
+
+    %% Styles for clarity
+    style A fill:#333,stroke:#666,stroke-width:2px,color:#fff
+    style E fill:#444,stroke:#888,stroke-width:2px,color:#fff
+    style F fill:#2c3e50,stroke:#34495e,stroke-width:2px,color:#fff
+    style G fill:#27ae60,stroke:#2ecc71,stroke-width:2px,color:#fff
+    style H fill:#8e44ad,stroke:#9b59b6,stroke-width:2px,color:#fff
+    style I fill:#2980b9,stroke:#3498db,stroke-width:2px,color:#fff
+    style J fill:#c0392b,stroke:#e74c3c,stroke-width:2px,color:#fff
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Imperative Shell                        │
-│  app/Main.hs  ─  CLI, IO, STM workers, metrics printing     │
-└────────────────────────┬────────────────────────────────────┘
-                         │ calls
-┌────────────────────────▼────────────────────────────────────┐
 │                     Functional Core                         │
 │                                                             │
 │  Engine.Core      pure applyEvent, replay, replayUntil      │
@@ -105,6 +129,21 @@ stack exec payment-engine -- scenario --name timeout
 # Run property tests (500 QuickCheck iterations each)
 stack test
 ```
+
+---
+
+## 🌐 Running the Dashboard (Frontend + Bridge)
+
+The project includes a React dashboard and an Express SSE (Server-Sent Events) bridge that streams live transaction data from the Haskell engine to the browser.
+
+```bash
+# From the root of the project:
+npm install
+
+# Start the Node Express Server (bridge) AND the React Vite Server
+npm run dev:all
+```
+Open **`http://localhost:3000`** in your browser. The dashboard connects to the bridge, spawns the Haskell engine, and renders the concurrent transactions on a live React Flow canvas.
 
 ---
 
