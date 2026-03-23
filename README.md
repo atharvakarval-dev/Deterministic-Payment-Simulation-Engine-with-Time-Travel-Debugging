@@ -38,19 +38,9 @@ graph TD
     style I fill:#2980b9,stroke:#3498db,stroke-width:2px,color:#fff
     style J fill:#c0392b,stroke:#e74c3c,stroke-width:2px,color:#fff
 ```
-│                     Functional Core                         │
-│                                                             │
-│  Engine.Core      pure applyEvent, replay, replayUntil      │
-│  Engine.DSL       Tagless Final DSL: authorize>>capture>>…  │
-│  Engine.STM       STM concurrency, idempotency, back-press  │
-│                                                             │
-│  Domain.Types     GADTs, phantom types, ADTs                │
-│  Domain.StateMachine  pure state transitions                │
-│                                                             │
-│  Simulation.Generator  pure event stream generation         │
-│  Observability.Metrics pure structured logs + metrics       │
-└─────────────────────────────────────────────────────────────┘
-```
+
+---
+
 
 ### Key Design Decisions
 
